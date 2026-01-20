@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Media Speed
 // @namespace    https://github.com/ilyachch-userscripts/
-// @version      1.0
+// @version      1.1
 // @description  Change media speed
 // @author       ilyachch
 // @homepageURL  https://github.com/ilyachch-userscripts/media-speed
@@ -12,7 +12,6 @@
 // @license      MIT
 // @run-at       document-start
 // @match        *://*/*
-// @grant        GM_addStyle
 // @grant        GM_registerMenuCommand
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -25,6 +24,10 @@ const globalStorageKey = "global_media_speed_options";
 const siteStorageKeyPrefix = "site_media_speed_options_";
 
 const STYLE = `
+:host {
+    all: initial;
+}
+
 .user_media_speed_control {
     --width: 250px;
     --default-gap: 10px;
@@ -228,7 +231,6 @@ const LARGE_VIDEO_STEP = 90;
     );
 
     document.addEventListener("DOMContentLoaded", function (event) {
-        GM_addStyle(STYLE);
         if (document.querySelectorAll("video, audio").length > 0) {
             create_speed_control_element();
         }
@@ -290,17 +292,22 @@ const LARGE_VIDEO_STEP = 90;
 })();
 
 function set_selected_speed_option_active(speed) {
-    document
+    const shadowRoot = get_speed_control_shadow_root();
+    if (!shadowRoot) {
+        return;
+    }
+    shadowRoot
         .querySelectorAll(".user_media_speed_control_option")
         .forEach(function (element) {
             element.classList.remove("selected");
         });
-    document
+    shadowRoot
         .querySelector(
             `.user_media_speed_control_option[data-speed="${speed}"]`,
         )
         .classList.add("selected");
-    document.querySelector(".user_media_speed_control_title").innerText = speed;
+    shadowRoot.querySelector(".user_media_speed_control_title").innerText =
+        speed;
 }
 
 function get_playback_speed() {
@@ -323,10 +330,11 @@ function save_playback_speed(speed) {
 }
 
 function create_speed_control_element() {
-    if (document.querySelectorAll(".user_media_speed_control").length > 0) {
+    if (get_speed_control_shadow_root()) {
         return;
     }
     let currentSpeed = get_playback_speed();
+    let shadowRoot = create_speed_control_shadow_root();
     let speed_control = document.createElement("div");
     speed_control.classList.add("user_media_speed_control");
 
@@ -348,6 +356,8 @@ function create_speed_control_element() {
         speed_option.addEventListener("click", function () {
             speed_option.dispatchEvent(
                 new CustomEvent("MediaPlaybackSpeedChanged", {
+                    bubbles: true,
+                    composed: true,
                     detail: {
                         speed: speed,
                         source: speed_option,
@@ -358,7 +368,7 @@ function create_speed_control_element() {
         speed_control.appendChild(speed_option);
     }
 
-    document.body.appendChild(speed_control);
+    shadowRoot.appendChild(speed_control);
 
     let hideTimeout, collapseTimeout;
 
@@ -388,7 +398,11 @@ function create_speed_control_element() {
     });
 
     document.addEventListener("click", function (event) {
-        if (!speed_control.contains(event.target)) {
+        const eventPath = event.composedPath ? event.composedPath() : [];
+        if (
+            !speed_control.contains(event.target) &&
+            !eventPath.includes(speed_control)
+        ) {
             clearTimeout(hideTimeout);
             clearTimeout(collapseTimeout);
             speed_control.style.flexDirection = "row";
@@ -405,8 +419,13 @@ function create_speed_control_element() {
 function increase_speed() {
     let current_speed = get_playback_speed();
     let new_speed = SPEED_OPTIONS.find((speed) => speed > current_speed);
+    if (!new_speed) {
+        return;
+    }
     document.dispatchEvent(
         new CustomEvent("MediaPlaybackSpeedChanged", {
+            bubbles: true,
+            composed: true,
             detail: {
                 speed: new_speed,
             },
@@ -419,8 +438,13 @@ function decrease_speed() {
     let new_speed = SPEED_OPTIONS.slice()
         .reverse()
         .find((speed) => speed < current_speed);
+    if (!new_speed) {
+        return;
+    }
     document.dispatchEvent(
         new CustomEvent("MediaPlaybackSpeedChanged", {
+            bubbles: true,
+            composed: true,
             detail: {
                 speed: new_speed,
             },
@@ -429,10 +453,15 @@ function decrease_speed() {
 }
 
 function show_notification(new_speed) {
-    if (document.querySelector(".user_media_speed_change_notification")) {
-        document
-            .querySelector(".user_media_speed_change_notification")
-            .remove();
+    const shadowRoot = get_speed_control_shadow_root();
+    if (!shadowRoot) {
+        return;
+    }
+    const existingNotification = shadowRoot.querySelector(
+        ".user_media_speed_change_notification",
+    );
+    if (existingNotification) {
+        existingNotification.remove();
     }
     let notification = document.createElement("div");
     notification.classList.add("user_media_speed_change_notification");
@@ -440,7 +469,7 @@ function show_notification(new_speed) {
     let notification_text = document.createElement("p");
     notification_text.innerText = `x${new_speed}`;
     notification.appendChild(notification_text);
-    document.body.appendChild(notification);
+    shadowRoot.appendChild(notification);
     notification.classList.remove("hidden");
     setTimeout(() => {
         notification.classList.add("hidden");
@@ -448,4 +477,27 @@ function show_notification(new_speed) {
             notification.remove();
         }, 100);
     }, 2000);
+}
+
+function create_speed_control_shadow_root() {
+    const host = document.createElement("div");
+    host.setAttribute("data-user-media-speed-host", "true");
+    host.style.position = "fixed";
+    host.style.zIndex = "9999";
+    host.style.left = "0";
+    host.style.top = "0";
+    const shadowRoot = host.attachShadow({ mode: "open" });
+    const style = document.createElement("style");
+    style.textContent = STYLE;
+    shadowRoot.appendChild(style);
+    document.body.appendChild(host);
+    return shadowRoot;
+}
+
+function get_speed_control_shadow_root() {
+    const host = document.querySelector('[data-user-media-speed-host="true"]');
+    if (!host || !host.shadowRoot) {
+        return null;
+    }
+    return host.shadowRoot;
 }
